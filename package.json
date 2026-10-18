@@ -1,0 +1,13 @@
+{
+  "name": "discord-telegram-tracker",
+  "version": "1.0.0",
+  "description": "Discord presence and voice channel tracker bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js-selfbot-v13": "^3.4.3",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
