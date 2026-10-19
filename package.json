@@ -1,7 +1,7 @@
 {
-  "name": "discord-telegram-tracker",
+  "name": "multi-tracker-bots",
   "version": "1.0.0",
-  "description": "Discord presence and voice channel tracker bot",
+  "description": "Combined Discord, Twitch, and Steam Telegram tracker bots",
   "main": "index.js",
   "engines": {
     "node": ">=18.0.0"
@@ -11,6 +11,9 @@
   },
   "dependencies": {
     "discord.js-selfbot-v13": "^3.4.3",
-    "node-telegram-bot-api": "^0.66.0"
+    "express": "^4.19.2",
+    "node-telegram-bot-api": "^0.66.0",
+    "steamid": "^2.0.0",
+    "tmi.js": "^1.8.5"
   }
 }
