@@ -415,7 +415,7 @@ async function startBots() {
         }
 
         checkPresencesManually();
-      }, 20000);
+      }, 10000);
     });
 
     discordClient.on("presenceUpdate", (oldPresence, newPresence) => {
