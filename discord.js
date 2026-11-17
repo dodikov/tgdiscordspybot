@@ -579,6 +579,50 @@ async function startBots() {
           .replace(/>/g, "&gt;");
         const message = `🔄 <b>${safeUsername}</b> moved from <code>${safeOldChannelName}</code> to <code>${safeNewChannelName}</code> in server <code>${safeGuildName}</code>`;
         telegramBot.sendMessage(telegramChatId, message, { parse_mode: "HTML" }).catch(console.error);
+      } else if (isOldTracked && isNewTracked && oldState.channelId === newState.channelId) {
+        const channelName = newState.channel?.name || "Unknown Channel";
+        const safeChannelName = channelName
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+
+        // 1. Self-Deafen (sound off/on) - checked first because deafening in Discord also toggles selfMute
+        if (Boolean(oldState.selfDeaf) !== Boolean(newState.selfDeaf)) {
+          if (newState.selfDeaf) {
+            const message = `🔇 <b>${safeUsername}</b> turned off sound (deafened) in <code>${safeChannelName}</code> in server <code>${safeGuildName}</code>`;
+            telegramBot.sendMessage(telegramChatId, message, { parse_mode: "HTML" }).catch(console.error);
+          } else {
+            const muteNote = newState.selfMute ? " (mic still muted)" : "";
+            const message = `🔊 <b>${safeUsername}</b> turned on sound (undeafened)${muteNote} in <code>${safeChannelName}</code> in server <code>${safeGuildName}</code>`;
+            telegramBot.sendMessage(telegramChatId, message, { parse_mode: "HTML" }).catch(console.error);
+          }
+        }
+        // 2. Self-Mute (mic off/on) when deafen state did not change
+        else if (Boolean(oldState.selfMute) !== Boolean(newState.selfMute)) {
+          if (newState.selfMute) {
+            const message = `🎙️❌ <b>${safeUsername}</b> muted their mic in <code>${safeChannelName}</code> in server <code>${safeGuildName}</code>`;
+            telegramBot.sendMessage(telegramChatId, message, { parse_mode: "HTML" }).catch(console.error);
+          } else {
+            const message = `🎙️✅ <b>${safeUsername}</b> unmuted their mic in <code>${safeChannelName}</code> in server <code>${safeGuildName}</code>`;
+            telegramBot.sendMessage(telegramChatId, message, { parse_mode: "HTML" }).catch(console.error);
+          }
+        }
+
+        // 3. Server-side Deafen (by moderator/admin)
+        if (Boolean(oldState.serverDeaf) !== Boolean(newState.serverDeaf)) {
+          const action = newState.serverDeaf ? "server-deafened" : "server-undeafened";
+          const emoji = newState.serverDeaf ? "🔇🛡️" : "🔊🛡️";
+          const message = `${emoji} <b>${safeUsername}</b> was <b>${action}</b> in <code>${safeChannelName}</code> in server <code>${safeGuildName}</code>`;
+          telegramBot.sendMessage(telegramChatId, message, { parse_mode: "HTML" }).catch(console.error);
+        }
+
+        // 4. Server-side Mute (by moderator/admin)
+        if (Boolean(oldState.serverMute) !== Boolean(newState.serverMute)) {
+          const action = newState.serverMute ? "server-muted" : "server-unmuted";
+          const emoji = newState.serverMute ? "🎙️🛡️" : "🗣️🛡️";
+          const message = `${emoji} <b>${safeUsername}</b> was <b>${action}</b> in <code>${safeChannelName}</code> in server <code>${safeGuildName}</code>`;
+          telegramBot.sendMessage(telegramChatId, message, { parse_mode: "HTML" }).catch(console.error);
+        }
       }
     });
 
