@@ -134,6 +134,25 @@ async function startBots() {
   try {
     const telegramBot = new TelegramBot(telegramToken, { polling: true });
 
+    let discordClient = null;
+    let isDiscordAlertSent = false;
+
+    async function notifyDiscordError(reason) {
+      if (isDiscordAlertSent) return;
+      isDiscordAlertSent = true;
+
+      const text =
+        `🚨 <b>Внимание: Discord перестал отвечать!</b>\n\n` +
+        `<b>Причина:</b> <code>${reason}</code>\n\n` +
+        `⚠️ Скорее всего, ваш <code>DISCORD_USER_TOKEN</code> истек, изменился пароль или сессия была сброшена. Пожалуйста, обновите токен.`;
+
+      try {
+        await telegramBot.sendMessage(telegramChatId, text, { parse_mode: "HTML" });
+      } catch (e) {
+        console.error("Failed to send Discord alert to Telegram:", e);
+      }
+    }
+
     telegramBot.on("polling_error", (err) => {
       console.error("Discord Telegram polling error:", err.message);
     });
@@ -144,7 +163,7 @@ async function startBots() {
           telegramBot
             .sendMessage(
               msg.chat.id,
-              `Your Telegram Chat ID is: ${msg.chat.id}\nCopy this into the TELEGRAM_CHAT_ID environment variable.`
+              `Your Telegram Chat ID is: ${msg.chat.id}\nCopy this into the TELEGRAM_CHAT_ID environment variable.\n\nCommands:\n/alive - Check Discord token status\n/list - View tracked users & servers`
             )
             .catch(console.error);
         }
@@ -332,12 +351,104 @@ async function startBots() {
 
           telegramBot.sendMessage(msg.chat.id, response, { parse_mode: "HTML" }).catch(console.error);
         }
+
+        if (command === "/alive") {
+          if (!discordClient) {
+            telegramBot
+              .sendMessage(msg.chat.id, "❌ Discord клиент еще не инициализирован.")
+              .catch(console.error);
+            return;
+          }
+
+          if (!discordClient.isReady()) {
+            telegramBot
+              .sendMessage(
+                msg.chat.id,
+                `⚠️ <b>Discord клиент не готов</b> (статус: <code>${discordClient.ws?.status ?? "отключен"}</code>).\nВозможно, идет подключение или произошла ошибка входа.`,
+                { parse_mode: "HTML" }
+              )
+              .catch(console.error);
+            return;
+          }
+
+          const checkingMsg = await telegramBot
+            .sendMessage(msg.chat.id, `🔄 <i>Проверка токена и соединения с Discord...</i>`, {
+              parse_mode: "HTML"
+            })
+            .catch(console.error);
+
+          try {
+            const startTime = Date.now();
+            const currentUser = await discordClient.user.fetch(true);
+            const latency = Date.now() - startTime;
+            const wsPing = Math.round(discordClient.ws.ping);
+
+            const safeUsername = (currentUser.tag || currentUser.username)
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;");
+
+            const reply =
+              `✅ <b>Discord токен активен и работает!</b>\n\n` +
+              `👤 <b>Аккаунт:</b> <code>${safeUsername}</code> (<code>${currentUser.id}</code>)\n` +
+              `🌐 <b>REST API Latency:</b> <code>${latency} ms</code>\n` +
+              `📡 <b>WebSocket Ping:</b> <code>${wsPing} ms</code>\n` +
+              `🟢 <b>Статус:</b> В сети`;
+
+            if (checkingMsg) {
+              telegramBot
+                .editMessageText(reply, {
+                  chat_id: msg.chat.id,
+                  message_id: checkingMsg.message_id,
+                  parse_mode: "HTML"
+                })
+                .catch(() => {
+                  telegramBot.sendMessage(msg.chat.id, reply, { parse_mode: "HTML" }).catch(console.error);
+                });
+            } else {
+              telegramBot.sendMessage(msg.chat.id, reply, { parse_mode: "HTML" }).catch(console.error);
+            }
+          } catch (err) {
+            console.error("Manual /alive check failed:", err);
+            const isAuthError =
+              err.status === 401 ||
+              err.code === 0 ||
+              err.message?.includes("401") ||
+              err.message?.toLowerCase().includes("token");
+
+            const failReply =
+              `❌ <b>Ошибка при обращении к Discord API!</b>\n\n` +
+              `<b>Причина:</b> <code>${err.message}</code>\n` +
+              `<b>Статус/Код:</b> <code>${err.status || err.code || "N/A"}</code>\n\n` +
+              (isAuthError
+                ? `🚨 <b>Токен недействителен или истек!</b> Требуется обновить <code>DISCORD_USER_TOKEN</code>.`
+                : `⚠️ Возможно, временный сбой сети или ограничение запросов.`);
+
+            if (checkingMsg) {
+              telegramBot
+                .editMessageText(failReply, {
+                  chat_id: msg.chat.id,
+                  message_id: checkingMsg.message_id,
+                  parse_mode: "HTML"
+                })
+                .catch(() => {
+                  telegramBot.sendMessage(msg.chat.id, failReply, { parse_mode: "HTML" }).catch(console.error);
+                });
+            } else {
+              telegramBot.sendMessage(msg.chat.id, failReply, { parse_mode: "HTML" }).catch(console.error);
+            }
+
+            if (isAuthError) {
+              notifyDiscordError(`Токен отклонен Discord API (проверка /alive): ${err.message}`);
+            }
+          }
+        }
       }
     });
 
     console.log("Discord Telegram bot active.");
 
-    const discordClient = new Client({
+    discordClient = new Client({
       checkUpdate: false,
       syncStatus: true
     });
@@ -389,6 +500,7 @@ async function startBots() {
     }
 
     discordClient.on("ready", () => {
+      isDiscordAlertSent = false;
       console.log(`Discord bot logged in as ${discordClient?.user?.tag}`);
 
       setInterval(async () => {
@@ -493,8 +605,42 @@ async function startBots() {
       }
     });
 
-    discordClient.login(discordToken).catch((err) => {
+    discordClient.on("invalidated", async () => {
+      console.error("Discord session invalidated.");
+      await notifyDiscordError("Сессия Discord инвалидирована (токен отозван или устарел)");
+    });
+
+    discordClient.on("shardDisconnect", async (event, shardId) => {
+      console.error(`Discord shard ${shardId} disconnected with code: ${event?.code}`);
+      if (event?.code === 4004) {
+        await notifyDiscordError("Discord отклонил токен (код 4004: Authentication Failed)");
+      }
+    });
+
+    discordClient.on("error", (err) => {
+      console.error("Discord client encountered an error:", err);
+    });
+
+    // Фоновая проверка раз в 5 минут (Health Check)
+    setInterval(async () => {
+      if (!discordClient || !discordClient.isReady()) return;
+      try {
+        await discordClient.user.fetch(true);
+      } catch (err) {
+        if (
+          err.status === 401 ||
+          err.code === 0 ||
+          err.message?.includes("401") ||
+          err.message?.toLowerCase().includes("token")
+        ) {
+          await notifyDiscordError(`Токен отклонен сервером (401 Unauthorized): ${err.message}`);
+        }
+      }
+    }, 5 * 60 * 1000);
+
+    discordClient.login(discordToken).catch(async (err) => {
       console.error("Failed to login to Discord.", err.message);
+      await notifyDiscordError(`Ошибка авторизации при входе: ${err.message}`);
     });
   } catch (error) {
     console.error("Error setting up Discord bot:", error);
