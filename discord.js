@@ -360,88 +360,65 @@ async function startBots() {
             return;
           }
 
-          if (!discordClient.isReady()) {
+          const wsStatus = discordClient.ws?.status;
+          const isReady = discordClient.isReady();
+
+          if (!isReady || wsStatus !== 0) {
+            const statusNames = {
+              0: "READY (Подключен)",
+              1: "CONNECTING (Подключение)",
+              2: "RECONNECTING (Переподключение)",
+              3: "IDLE (Ожидание)",
+              4: "NEARLY (Почти готов)",
+              5: "DISCONNECTED (Отключен)"
+            };
+            const statusText = statusNames[wsStatus] || `Неизвестный (${wsStatus})`;
+
             telegramBot
               .sendMessage(
                 msg.chat.id,
-                `⚠️ <b>Discord клиент не готов</b> (статус: <code>${discordClient.ws?.status ?? "отключен"}</code>).\nВозможно, идет подключение или произошла ошибка входа.`,
+                `⚠️ <b>Discord клиент не готов!</b>\n\n` +
+                `• <b>Статус WebSocket:</b> <code>${statusText}</code>\n` +
+                `• <b>Сессия готова:</b> <code>${isReady ? "Да" : "Нет"}</code>\n\n` +
+                `Возможно, идет переподключение или токен истек.`,
                 { parse_mode: "HTML" }
               )
               .catch(console.error);
             return;
           }
 
-          const checkingMsg = await telegramBot
-            .sendMessage(msg.chat.id, `🔄 <i>Проверка токена и соединения с Discord...</i>`, {
-              parse_mode: "HTML"
-            })
-            .catch(console.error);
-
-          try {
-            const startTime = Date.now();
-            const currentUser = await discordClient.user.fetch(true);
-            const latency = Date.now() - startTime;
-            const wsPing = Math.round(discordClient.ws.ping);
-
-            const safeUsername = (currentUser.tag || currentUser.username)
-              .replace(/&/g, "&amp;")
-              .replace(/</g, "&lt;")
-              .replace(/>/g, "&gt;");
-
-            const reply =
-              `✅ <b>Discord токен активен и работает!</b>\n\n` +
-              `👤 <b>Аккаунт:</b> <code>${safeUsername}</code> (<code>${currentUser.id}</code>)\n` +
-              `🌐 <b>REST API Latency:</b> <code>${latency} ms</code>\n` +
-              `📡 <b>WebSocket Ping:</b> <code>${wsPing} ms</code>\n` +
-              `🟢 <b>Статус:</b> В сети`;
-
-            if (checkingMsg) {
-              telegramBot
-                .editMessageText(reply, {
-                  chat_id: msg.chat.id,
-                  message_id: checkingMsg.message_id,
-                  parse_mode: "HTML"
-                })
-                .catch(() => {
-                  telegramBot.sendMessage(msg.chat.id, reply, { parse_mode: "HTML" }).catch(console.error);
-                });
-            } else {
-              telegramBot.sendMessage(msg.chat.id, reply, { parse_mode: "HTML" }).catch(console.error);
-            }
-          } catch (err) {
-            console.error("Manual /alive check failed:", err);
-            const isAuthError =
-              err.status === 401 ||
-              err.code === 0 ||
-              err.message?.includes("401") ||
-              err.message?.toLowerCase().includes("token");
-
-            const failReply =
-              `❌ <b>Ошибка при обращении к Discord API!</b>\n\n` +
-              `<b>Причина:</b> <code>${err.message}</code>\n` +
-              `<b>Статус/Код:</b> <code>${err.status || err.code || "N/A"}</code>\n\n` +
-              (isAuthError
-                ? `🚨 <b>Токен недействителен или истек!</b> Требуется обновить <code>DISCORD_USER_TOKEN</code>.`
-                : `⚠️ Возможно, временный сбой сети или ограничение запросов.`);
-
-            if (checkingMsg) {
-              telegramBot
-                .editMessageText(failReply, {
-                  chat_id: msg.chat.id,
-                  message_id: checkingMsg.message_id,
-                  parse_mode: "HTML"
-                })
-                .catch(() => {
-                  telegramBot.sendMessage(msg.chat.id, failReply, { parse_mode: "HTML" }).catch(console.error);
-                });
-            } else {
-              telegramBot.sendMessage(msg.chat.id, failReply, { parse_mode: "HTML" }).catch(console.error);
-            }
-
-            if (isAuthError) {
-              notifyDiscordError(`Токен отклонен Discord API (проверка /alive): ${err.message}`);
-            }
+          function formatUptime(ms) {
+            const totalSeconds = Math.floor(ms / 1000);
+            const days = Math.floor(totalSeconds / 86400);
+            const hours = Math.floor((totalSeconds % 86400) / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            let parts = [];
+            if (days > 0) parts.push(`${days}д`);
+            if (hours > 0) parts.push(`${hours}ч`);
+            if (minutes > 0) parts.push(`${minutes}м`);
+            parts.push(`${seconds}с`);
+            return parts.join(" ");
           }
+
+          const user = discordClient.user;
+          const safeUsername = (user?.tag || user?.username || "SelfBot")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+          const wsPing = Math.round(discordClient.ws?.ping ?? 0);
+          const uptimeStr = formatUptime(discordClient.uptime || 0);
+          const guildsCount = discordClient.guilds?.cache?.size ?? 0;
+
+          const reply =
+            `✅ <b>Discord сессия активна и работает!</b>\n\n` +
+            `👤 <b>Аккаунт:</b> <code>${safeUsername}</code> (<code>${user?.id}</code>)\n` +
+            `🟢 <b>Состояние:</b> В сети (Gateway активен)\n` +
+            `📡 <b>WebSocket Ping:</b> <code>${wsPing} ms</code>\n` +
+            `⏱ <b>Время работы:</b> <code>${uptimeStr}</code>\n` +
+            `🏢 <b>Серверов доступно:</b> <code>${guildsCount}</code>`;
+
+          telegramBot.sendMessage(msg.chat.id, reply, { parse_mode: "HTML" }).catch(console.error);
         }
       }
     });
@@ -621,22 +598,26 @@ async function startBots() {
       console.error("Discord client encountered an error:", err);
     });
 
-    // Фоновая проверка раз в 5 минут (Health Check)
+    // Фоновый мониторинг состояния соединения раз в 30 секунд
+    let disconnectedSince = null;
     setInterval(async () => {
-      if (!discordClient || !discordClient.isReady()) return;
-      try {
-        await discordClient.user.fetch(true);
-      } catch (err) {
-        if (
-          err.status === 401 ||
-          err.code === 0 ||
-          err.message?.includes("401") ||
-          err.message?.toLowerCase().includes("token")
-        ) {
-          await notifyDiscordError(`Токен отклонен сервером (401 Unauthorized): ${err.message}`);
+      if (!discordClient) return;
+
+      const isConnected = discordClient.isReady() && discordClient.ws?.status === 0;
+
+      if (!isConnected) {
+        if (!disconnectedSince) {
+          disconnectedSince = Date.now();
+        } else if (Date.now() - disconnectedSince > 90 * 1000) {
+          // Если клиент отключен более 90 секунд и не восстановился
+          await notifyDiscordError(
+            `Соединение с Discord разорвано и не восстанавливается (статус WebSocket: ${discordClient.ws?.status ?? "N/A"})`
+          );
         }
+      } else {
+        disconnectedSince = null;
       }
-    }, 5 * 60 * 1000);
+    }, 30 * 1000);
 
     discordClient.login(discordToken).catch(async (err) => {
       console.error("Failed to login to Discord.", err.message);
